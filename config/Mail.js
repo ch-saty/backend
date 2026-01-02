@@ -1,6 +1,12 @@
 import nodemailer from "nodemailer";
 import dotenv from "dotenv";
 dotenv.config();
+import fs from "fs";
+import path from "path";
+
+const templatePath = path.join(process.cwd(), "config/email.html");
+let emailTemplate = fs.readFileSync(templatePath, "utf8");
+
 const transporter = nodemailer.createTransport({
   // service: "Gmail",
   host: "smtp.gmail.com",
@@ -12,13 +18,21 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-const sendMail = async (to, otp) => {
-  await transporter.sendMail({
-    from: `${process.env.EMAIL}`,
-    to,
-    subject: "Reset Your Password",
-    html: `<p>Your OTP for password reset is <b>${otp}</b>. It expires in 5 minutes.</p>`,
-  });
-};
+export const sendMail = async (to, otp) => {
+  try {
+    const htmlContent = emailTemplate.replace("{{OTP}}", otp);
 
+    await transporter.sendMail({
+      from: process.env.EMAIL,
+      to,
+      subject: "Reset Your Password",
+      html: htmlContent,
+    });
+
+    return true;
+  } catch (error) {
+    console.error("Email sending error:", error);
+    return false;
+  }
+};
 export default sendMail;

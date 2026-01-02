@@ -12,7 +12,9 @@ import {
 
 const postRouter = express.Router();
 
-postRouter.post("/upload", isAuth, upload.single("media"), uploadPost);
+postRouter.post("/upload", isAuth, upload.array("image"), uploadPost);
+// upload.array("image") // 
+
 postRouter.get("/getAll", isAuth, getAllPosts);
 postRouter.get("/like/:postId", isAuth, like);
 postRouter.get("/saved/:postId", isAuth, saved);

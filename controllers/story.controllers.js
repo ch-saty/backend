@@ -1,92 +1,202 @@
-import uploadOnCloudinary from "../config/cloudinary.js"
-import Story from "../models/story.model.js"
-import User from "../models/user.model.js"
+import uploadOnCloudinary from "../config/cloudinary.js";
+import Story from "../models/story.model.js";
+import User from "../models/user.model.js";
+import fs from "fs";
+import { sendResponse } from "../config/response.js";
+import { asyncHandler } from "../config/asyncHandler.js";
 
-export const uploadStory = async (req, res) => {
-    try {
-        const user = await User.findById(req.userId)
-        if (user.story) {
-            await Story.findByIdAndDelete(user.story)
-            user.story = null
-        }
+export const uploadStory = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.userId);
+  if (!user) {
+    return sendResponse(res, {
+      status: false,
+      code: 404,
+      message: "User not found",
+    });
+  }
 
-        const { mediaType } = req.body
+  if (!req.file) {
+    return sendResponse(res, {
+      status: false,
+      code: 400,
+      message: "Story image is required",
+    });
+  }
 
-        let media;
-        if (req.file) {
-            media = await uploadOnCloudinary(req.file.path)
-        } else {
-            return res.status(400).json({ message: "media is required" })
-        }
-        const story = await Story.create({
-            author: req.userId, mediaType, media
-        })
-        user.story = story._id
-        await user.save()
-        const populatedStory = await Story.findById(story._id).populate("author", "name userName profileImage")
-            .populate("viewers", "name userName profileImage")
-        return res.status(200).json(populatedStory)
-    } catch (error) {
-        return res.status(500).json({ message: "story upload error" })
-    }
-}
+  // delete old story if exists
+  if (user.story) {
+    await Story.findByIdAndDelete(user.story);
+    user.story = null;
+  }
 
-export const viewStory = async (req, res) => {
-    try {
-        const storyId = req.params.storyId
-        const story = await Story.findById(storyId)
+  const media = await uploadOnCloudinary(req.file.path);
 
-        if (!story) {
-            return res.status(400).json({ message: "story not found" })
-        }
+  // ✅ SAFE CLEANUP
+  if (req.file?.path && fs.existsSync(req.file.path)) {
+    fs.unlinkSync(req.file.path);
+  }
 
-        const viewersIds = story.viewers.map(id => id.toString())
-        if (!viewersIds.includes(req.userId.toString())) {
-            story.viewers.push(req.userId)
-            await story.save()
-        }
+  const story = await Story.create({
+    author: req.userId,
+    media,
+    mediaType: "image",
+    expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24h expiry
+  });
 
-        const populatedStory = await Story.findById(story._id).populate("author", "name userName profileImage")
-            .populate("viewers", "name userName profileImage")
-        return res.status(200).json(populatedStory)
-    } catch (error) {
-        return res.status(500).json({ message: "story view error" })
-    }
-}
+  user.story = story._id;
+  await user.save();
 
+  const populatedStory = await Story.findById(story._id)
+    .populate("author", "name userName profileImage")
+    .populate("viewers", "name userName profileImage");
 
-export const getStoryByUserName=async (req,res)=>{
-    try {
-        const userName=req.params.userName
-        const user=await User.findOne({userName})
-        if(!user){
-             return res.status(400).json({ message: "user not found" })
-        }
+  return sendResponse(res, {
+    code: 201,
+    message: "Story uploaded successfully",
+    data: populatedStory,
+  });
+});
 
-        const story=await Story.find({
-            author:user._id
-        }).populate("viewers author")
+export const viewStory = asyncHandler(async (req, res) => {
+  const { storyId } = req.params;
 
-         return res.status(200).json(story)
-    } catch (error) {
-         return res.status(500).json({ message: "story get by userName error" })
-    }
-}
+  const story = await Story.findById(storyId);
+  if (!story) {
+    return sendResponse(res, {
+      status: false,
+      code: 404,
+      message: "Story not found",
+    });
+  }
 
-export const getAllStories=async (req,res)=>{
-    try {
-        const currentUser=await User.findById(req.userId)
-        const followingIds=currentUser.following
+  const alreadyViewed = story.viewers.some(
+    (id) => id.toString() === req.userId.toString()
+  );
 
-        const stories=await Story.find({
-            author:{$in:followingIds}
-        }).populate("viewers author")
-           .sort({createdAt:-1})
+  if (!alreadyViewed) {
+    story.viewers.push(req.userId);
+    await story.save();
+  }
 
-           return res.status(200).json(stories)
+  const populatedStory = await Story.findById(story._id)
+    .populate("author", "name userName profileImage")
+    .populate("viewers", "name userName profileImage");
 
+  return sendResponse(res, {
+    message: "Story viewed successfully",
+    data: populatedStory,
+  });
+});
 
-    } catch (error) {
-           return res.status(500).json({ message: "All story get error" })
-    }
-}
+export const getStoryByUserName = asyncHandler(async (req, res) => {
+  const { userName } = req.params;
+
+  const user = await User.findOne({ userName });
+  if (!user) {
+    return sendResponse(res, {
+      status: false,
+      code: 404,
+      message: "User not found",
+    });
+  }
+
+  const stories = await Story.find({
+    author: user._id,
+    expiresAt: { $gt: new Date() },
+  })
+    .populate("author", "name userName profileImage")
+    .populate("viewers", "name userName profileImage")
+    .sort({ createdAt: -1 });
+
+  return sendResponse(res, {
+    message: "Stories fetched successfully",
+    data: stories,
+  });
+});
+
+export const getAllStories = asyncHandler(async (req, res) => {
+  const currentUser = await User.findById(req.userId);
+
+  const stories = await Story.find({
+    author: { $in: currentUser.following },
+    expiresAt: { $gt: new Date() },
+  })
+    .populate("author", "name userName profileImage")
+    .populate("viewers", "name userName profileImage")
+    .sort({ createdAt: -1 });
+
+  const unseen = [];
+  const seen = [];
+
+  stories.forEach((story) => {
+    const hasSeen = story.viewers.some(
+      (v) => v._id.toString() === req.userId.toString()
+    );
+    hasSeen ? seen.push(story) : unseen.push(story);
+  });
+
+  return sendResponse(res, {
+    message: "Stories fetched successfully",
+    data: { unseen, seen },
+  });
+});
+
+export const reactToStory = asyncHandler(async (req, res) => {
+  const { storyId } = req.params;
+  const { emoji } = req.body;
+
+  const story = await Story.findById(storyId);
+  if (!story) {
+    return sendResponse(res, {
+      status: false,
+      code: 404,
+      message: "Story not found",
+    });
+  }
+
+  story.reactions.push({
+    user: req.userId,
+    emoji,
+  });
+
+  await story.save();
+
+  return sendResponse(res, {
+    message: "Reaction added",
+    data: story.reactions,
+  });
+});
+
+export const addStoryToHighlights = asyncHandler(async (req, res) => {
+  const { storyId } = req.params;
+
+  const story = await Story.findById(storyId);
+  if (!story) {
+    return sendResponse(res, {
+      status: false,
+      code: 404,
+      message: "Story not found",
+    });
+  }
+
+  story.isHighlighted = true;
+  await story.save();
+
+  return sendResponse(res, {
+    message: "Story added to highlights",
+  });
+});
+
+export const getAllHighlights = asyncHandler(async (req, res) => {
+  const highlights = await Story.find({
+    isHighlighted: true,
+  })
+    .populate("author", "name userName profileImage")
+    .populate("viewers", "name userName profileImage")
+    .sort({ createdAt: -1 });
+
+  return sendResponse(res, {
+    message: "Highlighted stories fetched successfully",
+    data: highlights,
+  });
+});

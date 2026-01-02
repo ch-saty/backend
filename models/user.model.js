@@ -20,6 +20,7 @@ const userSchema = new mongoose.Schema(
     password: {
       type: String,
       required: true,
+      select: false,
     },
     profileImage: {
       type: String,
@@ -40,12 +41,13 @@ const userSchema = new mongoose.Schema(
     loops: [{ type: mongoose.Schema.Types.ObjectId, ref: "Loop" }],
     story: { type: mongoose.Schema.Types.ObjectId, ref: "Story" },
 
-    resetOtp: {
-      type: String,
-    },
-    otpExpires: {
-      type: Date,
-    },
+    // resetOtp: {
+    //   type: String,
+    //   select: false,
+    // },
+    // otpExpires: {
+    //   type: Date,
+    // },
     isOtpVerified: {
       type: Boolean,
       default: false,
