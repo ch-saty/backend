@@ -2,52 +2,35 @@ import mongoose from "mongoose";
 
 const userSchema = new mongoose.Schema(
   {
-    name: {
-      type: String,
-      required: true,
-    },
-    userName: {
-      type: String,
-      required: true,
-      unique: true,
-    },
+    name: { type: String, required: true },
+    userName: { type: String, required: true, unique: true, index: true },
+    email: { type: String, required: true, unique: true },
+    password: { type: String, required: true, select: false },
 
-    email: {
-      type: String,
-      required: true,
-      unique: true,
-    },
-    password: {
-      type: String,
-      required: true,
-      select: false,
-    },
-    profileImage: {
-      type: String,
-    },
-    bio: {
-      type: String,
-    },
-    profession: {
-      type: String,
-    },
-    gender: {
-      type: String,
-    },
+    profileImage: String,
+    bio: String,
+    profession: String,
+    gender: String,
+
     followers: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
     following: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
     posts: [{ type: mongoose.Schema.Types.ObjectId, ref: "Post" }],
-    saved: [{ type: mongoose.Schema.Types.ObjectId, ref: "Post" }],
     loops: [{ type: mongoose.Schema.Types.ObjectId, ref: "Loop" }],
-    story: { type: mongoose.Schema.Types.ObjectId, ref: "Story" },
+    saved: [{ type: mongoose.Schema.Types.ObjectId, ref: "Post" }],
 
-    // resetOtp: {
-    //   type: String,
-    //   select: false,
-    // },
-    // otpExpires: {
-    //   type: Date,
-    // },
+    // ---------- CHEF TRUST ----------
+    chefRating: {
+      type: Number,
+      default: 100,
+      index: true,
+    },
+
+    chefLevel: {
+      type: String,
+      enum: ["Sous Chef", "Master Chef", "Michelin", "Legendary"],
+      default: "Sous Chef",
+    },
+
     isOtpVerified: {
       type: Boolean,
       default: false,

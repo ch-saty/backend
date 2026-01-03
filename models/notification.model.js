@@ -1,41 +1,75 @@
-import mongoose from "mongoose"
-const notificationSchema=new mongoose.Schema({
-    sender:{
-        type:mongoose.Schema.Types.ObjectId,
-        ref:"User",
-        required:true   
-    },
-     receiver:{
-        type:mongoose.Schema.Types.ObjectId,
-        ref:"User",
-        required:true   
-    },
-    type:{
-        type:String,
-        enum:["like","comment","follow"],
-        required:true
-    },
-    message:{
-        type:String, 
-        required:true
-    },
-    post:{
-           type:mongoose.Schema.Types.ObjectId,
-           ref:"Post",  
-    },
-    loop:{
-       type:mongoose.Schema.Types.ObjectId,
-        ref:"Loop",  
+import mongoose from "mongoose";
+
+const notificationSchema = new mongoose.Schema(
+  {
+    sender: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true,
     },
 
-isRead:{
-    type:Boolean,
-    default:false
-}
+    receiver: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true,
+    },
 
-},{timestamps:true})
+    type: {
+      type: String,
+      enum: [
+        // social
+        "like",
+        "comment",
+        "follow",
 
+        // orders
+        "order",
+        "order_status",
+        "order_cancelled",
 
-const Notification=mongoose.model("Notification",notificationSchema)
+        // special requests
+        "special_request",
+        "special_request_accepted",
+        "special_request_rejected",
 
-export default Notification
+        // ratings
+        "rating",
+      ],
+      required: true,
+      index: true,
+    },
+
+    message: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
+    post: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Post",
+    },
+
+    order: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Order",
+    },
+
+    loop: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Loop",
+    },
+
+    isRead: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+  },
+  { timestamps: true }
+);
+
+const Notification = mongoose.model("Notification", notificationSchema);
+export default Notification;

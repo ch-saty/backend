@@ -7,9 +7,17 @@ import { sendResponse } from "../config/response.js";
 import { asyncHandler } from "../config/asyncHandler.js";
 
 export const uploadPost = asyncHandler(async (req, res) => {
-  const { caption } = req.body;
+  const {
+    caption,
+    tags = [],
+    pricePerServing,
+    foodReadyTime,
+    totalServings,
+    latitude,
+    longitude,
+  } = req.body;
 
-  if (!req.files || req.files.length === 0) {
+  if (!req.files?.length) {
     return sendResponse(res, {
       status: false,
       code: 400,
@@ -17,58 +25,320 @@ export const uploadPost = asyncHandler(async (req, res) => {
     });
   }
 
+  const normalizedTags = tags.map((t) => t.toLowerCase().trim());
+  const dishKey = normalizedTags[0];
+
+  // check if dish exists before by same chef
+  const previousDish = await Post.findOne({
+    author: req.userId,
+    dishKey,
+  });
+
+  const isCookingPost = !!foodReadyTime;
+
+  // cooking validation
+  if (isCookingPost) {
+    const readyTime = new Date(foodReadyTime);
+    if (readyTime - Date.now() < 2 * 60 * 60 * 1000) {
+      return sendResponse(res, {
+        status: false,
+        code: 400,
+        message: "Dish must be posted at least 2 hours before ready time",
+      });
+    }
+  }
+
   const media = await Promise.all(
-    req.files.map((file) => uploadOnCloudinary(file.path))
+    req.files.map((f) => uploadOnCloudinary(f.path))
   );
 
   const post = await Post.create({
-    caption,
-    media,
     author: req.userId,
-    mediaType: "image",
+    caption,
+    tags: normalizedTags,
+    dishKey,
+    media,
+    postType: isCookingPost ? "cooking" : "informational",
+    orderable: isCookingPost && !!previousDish,
+    pricePerServing,
+    foodReadyTime,
+    totalServings,
+    availableServings: totalServings,
+    status: isCookingPost ? "in_progress" : "published",
+    location:
+      latitude && longitude
+        ? {
+            type: "Point",
+            coordinates: [longitude, latitude],
+          }
+        : undefined,
   });
 
-  await User.updateOne({ _id: req.userId }, { $push: { posts: post._id } });
+  await User.updateOne({ _id: req.userId }, { $addToSet: { posts: post._id } });
 
-  const populatedPost = await Post.findById(post._id).populate(
+  const populated = await Post.findById(post._id).populate(
     "author",
-    "name userName profileImage"
+    "name userName profileImage chefRating chefLevel"
   );
 
   return sendResponse(res, {
     code: 201,
-    message: "Image post uploaded successfully",
-    data: populatedPost,
+    message: "Dish post created successfully",
+    data: populated,
+  });
+});
+
+export const repostDish = asyncHandler(async (req, res) => {
+  const { postId } = req.params;
+  const { pricePerServing, foodReadyTime, totalServings } = req.body;
+
+  if (!pricePerServing || !foodReadyTime || !totalServings) {
+    return sendResponse(res, {
+      status: false,
+      code: 400,
+      message: "pricePerServing, foodReadyTime and totalServings are required",
+    });
+  }
+
+  const post = await Post.findById(postId);
+  if (!post) {
+    return sendResponse(res, {
+      status: false,
+      code: 404,
+      message: "Post not found",
+    });
+  }
+
+  // only chef
+  if (post.author.toString() !== req.userId.toString()) {
+    return sendResponse(res, {
+      status: false,
+      code: 403,
+      message: "You are not allowed to repost this dish",
+    });
+  }
+
+  // 🔴 CRITICAL GUARD
+  if (post.status === "in_progress") {
+    return sendResponse(res, {
+      status: false,
+      code: 400,
+      message:
+        "Dish is already in progress. Complete or expire it before reposting.",
+    });
+  }
+
+  // 2-hour rule
+  const readyTime = new Date(foodReadyTime);
+  if (readyTime - Date.now() < 2 * 60 * 60 * 1000) {
+    return sendResponse(res, {
+      status: false,
+      code: 400,
+      message: "Dish must be reposted at least 2 hours before ready time",
+    });
+  }
+
+  post.postType = "cooking";
+  post.status = "in_progress";
+  post.orderable = true;
+
+  post.pricePerServing = pricePerServing;
+  post.foodReadyTime = foodReadyTime;
+  post.totalServings = totalServings;
+  post.availableServings = totalServings;
+
+  await post.save();
+
+  const populated = await Post.findById(post._id).populate(
+    "author",
+    "name userName profileImage chefRating chefLevel"
+  );
+
+  return sendResponse(res, {
+    message: "Dish reposted and now accepting orders",
+    data: populated,
+  });
+});
+
+ 
+export const updatePostStatus = asyncHandler(async (req, res) => {
+  const { postId } = req.params;
+  const { status } = req.body;
+
+  if (!["completed", "expired"].includes(status)) {
+    return sendResponse(res, {
+      status: false,
+      code: 400,
+      message: "Invalid status update",
+    });
+  }
+
+  const post = await Post.findById(postId);
+  if (!post) {
+    return sendResponse(res, {
+      status: false,
+      code: 404,
+      message: "Post not found",
+    });
+  }
+
+  // only chef
+  if (post.author.toString() !== req.userId.toString()) {
+    return sendResponse(res, {
+      status: false,
+      code: 403,
+      message: "Not authorized to update dish status",
+    });
+  }
+
+  // only active dishes
+  if (post.status !== "in_progress") {
+    return sendResponse(res, {
+      status: false,
+      code: 400,
+      message: "Only in-progress dishes can be updated",
+    });
+  }
+
+  post.status = status;
+  post.orderable = false;
+
+  await post.save();
+
+  return sendResponse(res, {
+    message: `Dish marked as ${status}`,
+    data: post,
   });
 });
 
 export const getAllPosts = asyncHandler(async (req, res) => {
-  const page = Math.max(parseInt(req.query.page) || 1, 1);
-  const limit = Math.min(parseInt(req.query.limit) || 10, 50);
-  const skip = (page - 1) * limit;
+  const {
+    page = 1,
+    limit = 10,
+    lat,
+    lng,
+    search,
+    minRating,
+    maxRating,
+    minPrice,
+    maxPrice,
+    sortBy,
+  } = req.query;
 
-  const totalItems = await Post.countDocuments();
+  const safePage = Math.max(parseInt(page), 1);
+  const safeLimit = Math.min(parseInt(limit), 50);
+  const skip = (safePage - 1) * safeLimit;
 
-  const posts = await Post.find({})
-    .populate("author", "name userName profileImage")
-    .populate("comments.author", "name userName profileImage")
-    .sort({ createdAt: -1 })
-    .skip(skip)
-    .limit(limit)
-    .lean();
+  const pipeline = [];
 
-  const totalPages = Math.ceil(totalItems / limit);
+  if (lat && lng) {
+    pipeline.push({
+      $geoNear: {
+        near: {
+          type: "Point",
+          coordinates: [Number(lng), Number(lat)],
+        },
+        distanceField: "distance",
+        spherical: true,
+      },
+    });
+  }
+
+  const match = { status: { $ne: "expired" } };
+
+  if (search) {
+    match.tags = { $regex: search.toLowerCase(), $options: "i" };
+  }
+
+  if (minRating || maxRating) {
+    match["stats.avgRating"] = {};
+    if (minRating) match["stats.avgRating"].$gte = Number(minRating);
+    if (maxRating) match["stats.avgRating"].$lte = Number(maxRating);
+  }
+
+  if (minPrice || maxPrice) {
+    match.pricePerServing = {};
+    if (minPrice) match.pricePerServing.$gte = Number(minPrice);
+    if (maxPrice) match.pricePerServing.$lte = Number(maxPrice);
+  }
+
+  pipeline.push({ $match: match });
+
+  pipeline.push({
+    $sort: {
+      ...(lat && lng ? { distance: 1 } : {}),
+      "stats.avgRating": -1,
+      "stats.ordersCount": -1,
+      "stats.savedCount": -1,
+      "stats.commentsCount": -1,
+      "stats.likesCount": -1,
+      createdAt: -1,
+    },
+  });
+
+  pipeline.push({
+    $facet: {
+      posts: [
+        { $skip: skip },
+        { $limit: safeLimit },
+
+        {
+          $lookup: {
+            from: "users",
+            localField: "author",
+            foreignField: "_id",
+            as: "author",
+          },
+        },
+        { $unwind: "$author" },
+
+        {
+          $project: {
+            // post fields
+            _id: 1,
+            media: 1,
+            caption: 1,
+            tags: 1,
+            postType: 1,
+            status: 1,
+            orderable: 1,
+            pricePerServing: 1,
+            foodReadyTime: 1,
+            availableServings: 1,
+            stats: 1,
+            distance: 1,
+            createdAt: 1,
+
+            // author (chef) fields
+            "author._id": 1,
+            "author.name": 1,
+            "author.userName": 1,
+            "author.profileImage": 1,
+            "author.chefRating": 1,
+            "author.chefLevel": 1,
+          },
+        },
+      ],
+      totalCount: [{ $count: "count" }],
+    },
+  });
+
+  const result = await Post.aggregate(pipeline);
+
+  const posts = result[0]?.posts || [];
+  const totalItems = result[0]?.totalCount[0]?.count || 0;
+  const totalPages = Math.ceil(totalItems / safeLimit);
 
   return sendResponse(res, {
-    message: "Posts fetched successfully",
+    message: "Feed fetched successfully",
     data: {
       posts,
       pagination: {
-        page,
-        limit,
-        totalPages,
+        page: safePage,
+        limit: safeLimit,
         totalItems,
-        hasNextPage: page < totalPages,
+        totalPages,
+        hasNextPage: safePage < totalPages,
       },
     },
   });

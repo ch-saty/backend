@@ -11,6 +11,10 @@ import loopRouter from "./routes/loop.routes.js";
 import storyRouter from "./routes/story.routes.js";
 import messageRouter from "./routes/message.routes.js";
 import { errorHandler } from "./middlewares/error.middleware.js";
+import orderRouter from "./routes/order.routes.js";
+import specialRequestRouter from "./routes/specialRequest.routes.js";
+import ratingRouter from "./routes/rating.routes.js";
+
 dotenv.config();
 
 const app = express();
@@ -32,6 +36,10 @@ app.get("/", (req, res) => {
 
 app.use("/api/auth", authRouter);
 app.use("/api/user", userRouter);
+app.use("/api/order", orderRouter);
+app.use("/api/special-request", specialRequestRouter);
+app.use("/api/rating", ratingRouter);
+
 app.use("/api/post", postRouter);
 app.use("/api/loop", loopRouter);
 app.use("/api/story", storyRouter);
