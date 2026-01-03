@@ -115,14 +115,27 @@ export const getStoryByUserName = asyncHandler(async (req, res) => {
 });
 
 export const getAllStories = asyncHandler(async (req, res) => {
-  const currentUser = await User.findById(req.userId);
+  const currentUser = await User.findById(req.userId).select("following");
+
+  if (!currentUser) {
+    return sendResponse(res, {
+      status: false,
+      code: 404,
+      message: "User not found",
+    });
+  }
+
+  const authorIds = [
+    req.userId, // include own stories
+    ...(currentUser.following || []),
+  ];
 
   const stories = await Story.find({
-    author: { $in: currentUser.following },
+    author: { $in: authorIds },
     expiresAt: { $gt: new Date() },
   })
-    .populate("author", "name userName profileImage")
-    .populate("viewers", "name userName profileImage")
+    .populate("author", "_id name userName profileImage")
+    .populate("viewers", "_id")
     .sort({ createdAt: -1 });
 
   const unseen = [];
@@ -132,12 +145,27 @@ export const getAllStories = asyncHandler(async (req, res) => {
     const hasSeen = story.viewers.some(
       (v) => v._id.toString() === req.userId.toString()
     );
-    hasSeen ? seen.push(story) : unseen.push(story);
+
+    const shapedStory = {
+      _id: story._id,
+      media: story.media,
+      mediaType: story.mediaType,
+      createdAt: story.createdAt,
+      expiresAt: story.expiresAt,
+      isHighlighted: story.isHighlighted,
+      author: story.author,
+      viewersCount: story.viewers.length,
+    };
+
+    hasSeen ? seen.push(shapedStory) : unseen.push(shapedStory);
   });
 
   return sendResponse(res, {
     message: "Stories fetched successfully",
-    data: { unseen, seen },
+    data: {
+      unseen,
+      seen,
+    },
   });
 });
 
@@ -188,15 +216,19 @@ export const addStoryToHighlights = asyncHandler(async (req, res) => {
 });
 
 export const getAllHighlights = asyncHandler(async (req, res) => {
-  const highlights = await Story.find({
-    isHighlighted: true,
-  })
-    .populate("author", "name userName profileImage")
-    .populate("viewers", "name userName profileImage")
+  const highlights = await Story.find({ isHighlighted: true })
+    .populate("author", "_id name userName profileImage")
     .sort({ createdAt: -1 });
+
+  const data = highlights.map((story) => ({
+    _id: story._id,
+    media: story.media,
+    createdAt: story.createdAt,
+    author: story.author,
+  }));
 
   return sendResponse(res, {
     message: "Highlighted stories fetched successfully",
-    data: highlights,
+    data,
   });
 });
