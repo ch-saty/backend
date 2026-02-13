@@ -1,40 +1,94 @@
-import http from "http";
-import express from "express";
 import { Server } from "socket.io";
+import User from "./models/user.model.js";
 
-const app = express();
+const userSocketMap = new Map();
+let ioInstance = null;
 
-// FIX: ADD THIS
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+/* ================= INIT SOCKET ================= */
+export const initSocket = (server) => {
+  ioInstance = new Server(server, {
+    cors: {
+      origin: "http://localhost:5173",
+      credentials: true,
+      methods: ["GET", "POST"],
+    },
+  });
 
-const server = http.createServer(app);
+  ioInstance.on("connection", (socket) => {
+    console.log("Socket connected:", socket.id);
 
-const io = new Server(server, {
-  cors: {
-    origin: "http://localhost:5173",
-    methods: ["GET", "POST"],
-  },
-});
+    /* ---------- IDENTITY ---------- */
+    socket.on("identity", async ({ userId }) => {
+      if (!userId) return;
 
-const userSocketMap = {};
+      userSocketMap.set(String(userId), socket.id);
 
-export const getSocketId = (receiverId) => {
-  return userSocketMap[receiverId];
+      await User.findByIdAndUpdate(userId, {
+        socketId: socket.id,
+        isOnline: true,
+      });
+
+      ioInstance.emit("getOnlineUsers", Array.from(userSocketMap.keys()));
+    });
+
+    /* ---------- LOCATION UPDATE ---------- */
+    socket.on("updateLocation", async ({ latitude, longitude, userId }) => {
+      if (!userId) return;
+
+      const user = await User.findByIdAndUpdate(
+        userId,
+        {
+          location: {
+            type: "Point",
+            coordinates: [longitude, latitude],
+          },
+          isOnline: true,
+          socketId: socket.id,
+        },
+        { new: true },
+      );
+
+      if (user) {
+        ioInstance.emit("updateDeliveryLocation", {
+          deliveryBoyId: userId,
+          latitude,
+          longitude,
+        });
+      }
+    });
+
+    /* ---------- DISCONNECT ---------- */
+    socket.on("disconnect", async () => {
+      console.log("Socket disconnected:", socket.id);
+
+      for (const [userId, sId] of userSocketMap.entries()) {
+        if (sId === socket.id) {
+          userSocketMap.delete(userId);
+
+          await User.findByIdAndUpdate(userId, {
+            socketId: null,
+            isOnline: false,
+          });
+
+          break;
+        }
+      }
+
+      ioInstance.emit("getOnlineUsers", Array.from(userSocketMap.keys()));
+    });
+  });
+
+  return ioInstance;
 };
 
-io.on("connection", (socket) => {
-  const userId = socket.handshake.query.userId;
-  if (userId != undefined) {
-    userSocketMap[userId] = socket.id;
-  }
+export const getSocketId = (userId) => {
+  return userSocketMap.get(String(userId));
+};
 
-  io.emit("getOnlineUsers", Object.keys(userSocketMap));
-
-  socket.on("disconnect", () => {
-    delete userSocketMap[userId];
-    io.emit("getOnlineUsers", Object.keys(userSocketMap));
-  });
-});
-
-export { app, io, server };
+export const io = {
+  to: (...args) => ioInstance.to(...args),
+  emit: (...args) => ioInstance.emit(...args),
+};
+export const socketHandler = (io) => {
+  ioInstance = io;
+};

@@ -160,7 +160,6 @@ export const repostDish = asyncHandler(async (req, res) => {
   });
 });
 
- 
 export const updatePostStatus = asyncHandler(async (req, res) => {
   const { postId } = req.params;
   const { status } = req.body;
@@ -231,6 +230,9 @@ export const getAllPosts = asyncHandler(async (req, res) => {
 
   const pipeline = [];
 
+  /* ----------------------------------------------------
+   * 1️⃣ GEO SORT (optional)
+   * -------------------------------------------------- */
   if (lat && lng) {
     pipeline.push({
       $geoNear: {
@@ -244,10 +246,18 @@ export const getAllPosts = asyncHandler(async (req, res) => {
     });
   }
 
-  const match = { status: { $ne: "expired" } };
+  /* ----------------------------------------------------
+   * 2️⃣ FILTERS
+   * -------------------------------------------------- */
+  const match = {
+    status: { $ne: "expired" },
+  };
 
   if (search) {
-    match.tags = { $regex: search.toLowerCase(), $options: "i" };
+    match.tags = {
+      $regex: search.toLowerCase(),
+      $options: "i",
+    };
   }
 
   if (minRating || maxRating) {
@@ -264,6 +274,9 @@ export const getAllPosts = asyncHandler(async (req, res) => {
 
   pipeline.push({ $match: match });
 
+  /* ----------------------------------------------------
+   * 3️⃣ SORTING (priority based)
+   * -------------------------------------------------- */
   pipeline.push({
     $sort: {
       ...(lat && lng ? { distance: 1 } : {}),
@@ -276,22 +289,43 @@ export const getAllPosts = asyncHandler(async (req, res) => {
     },
   });
 
+  /* ----------------------------------------------------
+   * 4️⃣ PAGINATION + COUNT (FACET)
+   * -------------------------------------------------- */
   pipeline.push({
     $facet: {
       posts: [
         { $skip: skip },
         { $limit: safeLimit },
 
+        /* ---------- AUTHOR LOOKUP (FIXED) ---------- */
         {
           $lookup: {
             from: "users",
-            localField: "author",
-            foreignField: "_id",
+            let: { authorId: "$author" },
+            pipeline: [
+              {
+                $match: {
+                  $expr: { $eq: ["$_id", "$$authorId"] },
+                },
+              },
+              {
+                $project: {
+                  _id: 1,
+                  name: 1,
+                  userName: 1,
+                  profileImage: 1,
+                  chefRating: 1,
+                  chefLevel: 1,
+                },
+              },
+            ],
             as: "author",
           },
         },
         { $unwind: "$author" },
 
+        /* ---------- FINAL RESPONSE SHAPE ---------- */
         {
           $project: {
             // post fields
@@ -309,13 +343,8 @@ export const getAllPosts = asyncHandler(async (req, res) => {
             distance: 1,
             createdAt: 1,
 
-            // author (chef) fields
-            "author._id": 1,
-            "author.name": 1,
-            "author.userName": 1,
-            "author.profileImage": 1,
-            "author.chefRating": 1,
-            "author.chefLevel": 1,
+            // author
+            author: 1,
           },
         },
       ],
@@ -323,6 +352,9 @@ export const getAllPosts = asyncHandler(async (req, res) => {
     },
   });
 
+  /* ----------------------------------------------------
+   * 5️⃣ EXECUTE
+   * -------------------------------------------------- */
   const result = await Post.aggregate(pipeline);
 
   const posts = result[0]?.posts || [];

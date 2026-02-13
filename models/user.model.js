@@ -7,6 +7,15 @@ const userSchema = new mongoose.Schema(
     email: { type: String, required: true, unique: true },
     password: { type: String, required: true, select: false },
 
+    fullName: { type: String },
+    mobile: { type: String },
+
+    role: {
+      type: String,
+      enum: ["user", "owner", "deliveryBoy"],
+      default: "user",
+    },
+
     profileImage: String,
     bio: String,
     profession: String,
@@ -18,26 +27,33 @@ const userSchema = new mongoose.Schema(
     loops: [{ type: mongoose.Schema.Types.ObjectId, ref: "Loop" }],
     saved: [{ type: mongoose.Schema.Types.ObjectId, ref: "Post" }],
 
-    // ---------- CHEF TRUST ----------
+    resetOtp: String,
+    otpExpires: Date,
+    isOtpVerified: { type: Boolean, default: false },
+
+    socketId: String,
+    isOnline: { type: Boolean, default: false },
+
+    location: {
+      type: { type: String, enum: ["Point"], default: "Point" },
+      coordinates: { type: [Number], default: [0, 0] },
+    },
+
     chefRating: {
       type: Number,
       default: 100,
       index: true,
     },
-
     chefLevel: {
       type: String,
       enum: ["Sous Chef", "Master Chef", "Michelin", "Legendary"],
       default: "Sous Chef",
     },
-
-    isOtpVerified: {
-      type: Boolean,
-      default: false,
-    },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
+
+userSchema.index({ location: "2dsphere" });
 
 const User = mongoose.model("User", userSchema);
 export default User;
